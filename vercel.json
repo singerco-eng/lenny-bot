@@ -1,5 +1,7 @@
 {
+  "buildCommand": "npm run build",
   "outputDirectory": "admin/dist",
+  "installCommand": "npm install",
   "rewrites": [
     {
       "source": "/(.*)",
