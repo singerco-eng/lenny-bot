@@ -1,7 +1,7 @@
 {
-  "buildCommand": "cd admin && npm install && npm run build",
+  "buildCommand": "npm --prefix admin run build",
+  "installCommand": "npm --prefix admin install",
   "outputDirectory": "admin/dist",
-  "installCommand": "npm install --prefix admin",
   "framework": "vite",
   "rewrites": [
     {
