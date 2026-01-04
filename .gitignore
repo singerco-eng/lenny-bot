@@ -1,0 +1,113 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+.venv/
+ENV/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Browser data (contains auth session)
+browser-data/
+cookies.json
+
+# Screenshots and scraped data (large files)
+data/screenshots/
+data/raw/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Supabase
+supabase/.temp/
+
+# Node (for admin panel)
+node_modules/
+.next/
+out/
+.vercel
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary/test files
+*_result.txt
+test_db_connection.py
+verify_setup.py
+setup_database.py
+env_*.txt
+db_test.py
+populate_product_areas.py
+query_pages.py
+
+# Generated sitemap files
+sitemap.html
+sitemap_nav.html
+sitemap_tree.html
+sitemap_canvas.html
+sitemap_modal.html
+
+# Root level bat files (but keep bat/ folder)
+/*.bat
+
+# Test/temporary screenshots and results
+test_crawl_screenshots/
+test_screenshots/
+real_crawl_screenshots/
+scripts/exploration_screenshots/
+scripts/test_screenshots/
+*_screenshot.png
+*_debug_screenshot.png
+test_*.png
+test_*.json
+real_crawl_results_*.json
+test_crawl_results_*.json
+filled_form_*.png
+after_save.png
+browser_state.png
+
+# Chrome profile data (auth session)
+chrome_profile/
+
+# Video processing frames (large binary files)
+video_processing/
+video_processing_test/
+
+# Archived files (old deprecated code/screenshots)
+_archived/
