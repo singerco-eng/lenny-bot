@@ -161,7 +161,7 @@ function CustomEdge({
 }: EdgeProps) {
   const [showTooltip, setShowTooltip] = useState(false)
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
-  const edgeData = data as EdgeData | undefined
+  const edgeData = data as any as EdgeData | undefined
   
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -545,7 +545,7 @@ export default function SitemapPage() {
       // Style edges - highlight connected (with labels), fade others
       const filteredEdges = allEdges.map(edge => {
         const isConnected = connectedEdgeIds.has(edge.id)
-        const edgeData = edge.data as EdgeData
+        const edgeData = edge.data as any as EdgeData
         return {
           ...edge,
           style: isConnected ? {} : { opacity: 0.1 },
@@ -568,7 +568,7 @@ export default function SitemapPage() {
       
       // Find matching nodes
       const filteredNodes = allNodes.map(node => {
-        const data = node.data as PageNodeData
+        const data = node.data as any as PageNodeData
         const matches = 
           data.title.toLowerCase().includes(query) ||
           data.url_pattern.toLowerCase().includes(query) ||
@@ -603,7 +603,7 @@ export default function SitemapPage() {
     const edgesWithoutLabels = allEdges.map(edge => ({
       ...edge,
       data: {
-        ...(edge.data as EdgeData),
+        ...(edge.data as any as EdgeData),
         showLabel: false,
       },
     }))
@@ -625,34 +625,34 @@ export default function SitemapPage() {
   const filteredNodeTitle = useMemo(() => {
     if (!filteredNodeId) return null
     const node = allNodes.find(n => n.id === filteredNodeId)
-    return node ? (node.data as PageNodeData).title : null
+    return node ? (node.data as any as PageNodeData).title : null
   }, [filteredNodeId, allNodes])
   
   // Get the filtered node's URL pattern for the "View Details" link
   const filteredNodeUrl = useMemo(() => {
     if (!filteredNodeId) return null
     const node = allNodes.find(n => n.id === filteredNodeId)
-    return node ? (node.data as PageNodeData).url_pattern : null
+    return node ? (node.data as any as PageNodeData).url_pattern : null
   }, [filteredNodeId, allNodes])
 
   // Handle edge click - show actions modal
   const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
-    const edgeData = edge.data as EdgeData | undefined
+    const edgeData = edge.data as any as EdgeData | undefined
     if (edgeData) {
       // Find source and target node titles
       const sourceNode = allNodes.find(n => n.id === edge.source)
       const targetNode = allNodes.find(n => n.id === edge.target)
       setSelectedEdge({
         actions: edgeData.actions,
-        source: (sourceNode?.data as PageNodeData)?.title || 'Unknown',
-        target: (targetNode?.data as PageNodeData)?.title || 'Unknown',
+        source: (sourceNode?.data as any as PageNodeData)?.title || 'Unknown',
+        target: (targetNode?.data as any as PageNodeData)?.title || 'Unknown',
       })
     }
   }, [allNodes])
 
   // MiniMap node color
   const nodeColor = useCallback((node: Node) => {
-    const productArea = (node.data as PageNodeData).product_area
+    const productArea = (node.data as any as PageNodeData).product_area
     return PRODUCT_AREA_COLORS[productArea || ''] || PRODUCT_AREA_COLORS.default
   }, [])
 

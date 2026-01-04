@@ -479,7 +479,7 @@ export default function PageDetailPage() {
                     <h3 className="al-label mb-3">KB Context</h3>
                     <div className="flex flex-wrap gap-2">
                       {(() => {
-                        let kbItems = selectedComponent.kb_context_used
+                        let kbItems: any = selectedComponent.kb_context_used
                         // Parse if it's a JSON string
                         if (typeof kbItems === 'string') {
                           try {
@@ -697,7 +697,7 @@ export default function PageDetailPage() {
                     <h3 className="al-label mb-3">KB Context</h3>
                     <div className="flex flex-wrap gap-2">
                       {(() => {
-                        let kbItems = selectedAction.kb_context_used
+                        let kbItems: any = selectedAction.kb_context_used
                         if (typeof kbItems === 'string') {
                           try {
                             kbItems = JSON.parse(kbItems)
