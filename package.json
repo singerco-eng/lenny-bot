@@ -1,0 +1,12 @@
+{
+  "name": "lenny-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lenny Bot - AccuLynx AI Documentation Agent",
+  "scripts": {
+    "install": "cd admin && npm install",
+    "build": "cd admin && npm run build",
+    "dev": "cd admin && npm run dev"
+  }
+}
+

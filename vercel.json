@@ -1,8 +1,5 @@
 {
-  "buildCommand": "npm --prefix admin run build",
-  "installCommand": "npm --prefix admin install",
   "outputDirectory": "admin/dist",
-  "framework": "vite",
   "rewrites": [
     {
       "source": "/(.*)",
