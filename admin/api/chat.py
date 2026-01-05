@@ -10,8 +10,12 @@ from http.server import BaseHTTPRequestHandler
 from typing import List, Optional, Dict, Any
 
 # Check for required env vars early
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+# Support both VITE_ prefixed (from frontend config) and non-prefixed names
+SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("VITE_SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("VITE_SUPABASE_SERVICE_ROLE_KEY", "")
+# For the key, also try anon key as fallback (may have RLS restrictions)
+if not SUPABASE_SERVICE_ROLE_KEY:
+    SUPABASE_SERVICE_ROLE_KEY = os.environ.get("VITE_SUPABASE_ANON_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 # Log env var status (values hidden for security)
