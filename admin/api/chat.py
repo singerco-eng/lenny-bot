@@ -1,22 +1,23 @@
 """
 Vercel Serverless Function: Chat with Lenny
 
-This is a self-contained serverless function that handles the Ask Lenny chat feature.
-It uses Supabase for data and OpenAI for embeddings + chat.
+Handles the Ask Lenny chat feature with streaming SSE responses.
 """
 import os
 import json
+import traceback
 from http.server import BaseHTTPRequestHandler
 from typing import List, Optional, Dict, Any
 
-from openai import OpenAI
-from supabase import create_client
-
-
-# Environment variables (set in Vercel dashboard)
+# Check for required env vars early
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+# Log env var status (values hidden for security)
+print(f"[INIT] SUPABASE_URL set: {bool(SUPABASE_URL)}")
+print(f"[INIT] SUPABASE_SERVICE_ROLE_KEY set: {bool(SUPABASE_SERVICE_ROLE_KEY)}")
+print(f"[INIT] OPENAI_API_KEY set: {bool(OPENAI_API_KEY)}")
 
 # Models
 EMBEDDING_MODEL = "text-embedding-3-large"
@@ -42,11 +43,17 @@ This is for internal auditing - be thorough and specific about UI locations, not
 
 def get_supabase():
     """Get Supabase client."""
+    from supabase import create_client
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise ValueError("Missing Supabase credentials - check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY env vars")
     return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 def get_openai():
     """Get OpenAI client."""
+    from openai import OpenAI
+    if not OPENAI_API_KEY:
+        raise ValueError("Missing OPENAI_API_KEY env var")
     return OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -66,7 +73,8 @@ def generate_embedding(text: str) -> Optional[List[float]]:
         )
         return response.data[0].embedding
     except Exception as e:
-        print(f"Embedding error: {e}")
+        print(f"[ERROR] Embedding error: {e}")
+        traceback.print_exc()
         return None
 
 
@@ -80,11 +88,14 @@ def search_app_content(
     if content_types is None:
         content_types = ['action', 'component', 'page']
     
+    print(f"[SEARCH] Generating embedding for: {query[:50]}...")
     query_embedding = generate_embedding(query)
     if not query_embedding:
+        print("[SEARCH] Failed to generate embedding")
         return []
     
     try:
+        print("[SEARCH] Calling search_app_content RPC...")
         supabase = get_supabase()
         result = supabase.rpc(
             "search_app_content",
@@ -95,9 +106,11 @@ def search_app_content(
                 "content_types": content_types
             }
         ).execute()
+        print(f"[SEARCH] Found {len(result.data or [])} results")
         return result.data or []
     except Exception as e:
-        print(f"Search error: {e}")
+        print(f"[ERROR] Search error: {e}")
+        traceback.print_exc()
         return []
 
 
@@ -116,7 +129,7 @@ def search_kb_content(query: str, match_count: int = 3) -> List[Dict[str, Any]]:
         }).execute()
         return result.data or []
     except Exception as e:
-        print(f"KB search error: {e}")
+        print(f"[ERROR] KB search error: {e}")
         return []
 
 
@@ -124,12 +137,10 @@ def build_context(app_results: List[Dict], kb_results: List[Dict]) -> str:
     """Build context for LLM from search results."""
     context_parts = []
     
-    # Group app results by type
     pages = [r for r in app_results if r.get("content_type") == "page"]
     components = [r for r in app_results if r.get("content_type") == "component"]
     actions = [r for r in app_results if r.get("content_type") == "action"]
     
-    # Actions are most important
     if actions:
         context_parts.append("=== UI ACTIONS (where users can do things) ===")
         for action in actions[:15]:
@@ -151,21 +162,18 @@ def build_context(app_results: List[Dict], kb_results: List[Dict]) -> str:
             
             context_parts.append(f"• {elem_type} '{title}' {location}{result_info}\n  {description}")
     
-    # Components
     if components:
         context_parts.append("\n=== UI COMPONENTS (modals, drawers, panels) ===")
         for comp in components[:8]:
             title = comp.get("title", "")
             description = (comp.get("description", "") or "")[:300]
-            url = comp.get("url_or_path", "")
             metadata = comp.get("metadata") or {}
             comp_type = metadata.get("component_type", "component")
             page_title = metadata.get("page_title", "")
             
-            location = f"on '{page_title}'" if page_title else f"at {url}"
+            location = f"on '{page_title}'" if page_title else ""
             context_parts.append(f"• {comp_type} '{title}' {location}\n  {description}")
     
-    # Pages
     if pages:
         context_parts.append("\n=== PAGES (main screens) ===")
         for page in pages[:5]:
@@ -174,7 +182,6 @@ def build_context(app_results: List[Dict], kb_results: List[Dict]) -> str:
             url = page.get("url_or_path", "")
             context_parts.append(f"• Page '{title}' at {url}\n  {description}")
     
-    # KB context
     if kb_results:
         context_parts.append("\n=== Related KB Context ===")
         for kb in kb_results[:2]:
@@ -189,7 +196,6 @@ def format_sources(app_results: List[Dict], kb_results: List[Dict]) -> List[Dict
     """Format sources for response."""
     sources = []
     
-    # App sources first
     for r in app_results[:8]:
         sources.append({
             "id": r.get("id", ""),
@@ -201,7 +207,6 @@ def format_sources(app_results: List[Dict], kb_results: List[Dict]) -> List[Dict
             "similarity": r.get("similarity", 0)
         })
     
-    # KB sources
     for kb in kb_results[:2]:
         sources.append({
             "id": kb.get("chunk_id", kb.get("id", "")),
@@ -212,7 +217,6 @@ def format_sources(app_results: List[Dict], kb_results: List[Dict]) -> List[Dict
             "similarity": kb.get("similarity", 0)
         })
     
-    # Sort by similarity
     sources.sort(key=lambda x: x.get("similarity", 0), reverse=True)
     return sources[:8]
 
@@ -220,17 +224,60 @@ def format_sources(app_results: List[Dict], kb_results: List[Dict]) -> List[Dict
 class handler(BaseHTTPRequestHandler):
     """Vercel serverless handler."""
     
+    def log_message(self, format, *args):
+        """Override to use print for Vercel logs."""
+        print(f"[HTTP] {args[0]}")
+    
+    def _send_json_error(self, status: int, message: str):
+        """Send a JSON error response."""
+        self.send_response(status)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": message}).encode())
+    
+    def do_GET(self):
+        """Health check endpoint."""
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        
+        health = {
+            "status": "ok",
+            "service": "Lenny Chat API",
+            "env_check": {
+                "SUPABASE_URL": bool(SUPABASE_URL),
+                "SUPABASE_SERVICE_ROLE_KEY": bool(SUPABASE_SERVICE_ROLE_KEY),
+                "OPENAI_API_KEY": bool(OPENAI_API_KEY)
+            }
+        }
+        self.wfile.write(json.dumps(health).encode())
+    
     def do_OPTIONS(self):
         """Handle CORS preflight."""
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
     
     def do_POST(self):
         """Handle chat request."""
-        # CORS headers
+        print("[POST] Chat request received")
+        
+        # Check env vars first
+        if not OPENAI_API_KEY:
+            print("[ERROR] Missing OPENAI_API_KEY")
+            self._send_json_error(500, "Server misconfigured: Missing OPENAI_API_KEY")
+            return
+        
+        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+            print("[ERROR] Missing Supabase credentials")
+            self._send_json_error(500, "Server misconfigured: Missing Supabase credentials")
+            return
+        
+        # Set up SSE response
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Content-Type", "text/event-stream")
@@ -247,17 +294,21 @@ class handler(BaseHTTPRequestHandler):
             message = data.get("message", "")
             history = data.get("history", [])
             
+            print(f"[POST] Message: {message[:100]}...")
+            
             if not message:
                 self._send_event("error", {"message": "No message provided"})
                 self._send_event("done", {})
                 return
             
             # Search for context
+            print("[POST] Searching for context...")
             app_results = search_app_content(message)
             kb_results = search_kb_content(message)
             
             # Send sources first
             sources = format_sources(app_results, kb_results)
+            print(f"[POST] Sending {len(sources)} sources")
             self._send_event("sources", {"sources": sources})
             
             # Build context and messages
@@ -268,13 +319,13 @@ class handler(BaseHTTPRequestHandler):
                 {"role": "system", "content": f"Here's what I found in the AccuLynx documentation:\n\n{context}"}
             ]
             
-            # Add history
             for msg in history[-6:]:
                 messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
             
             messages.append({"role": "user", "content": message})
             
             # Stream response
+            print("[POST] Starting OpenAI stream...")
             client = get_openai()
             stream = client.chat.completions.create(
                 model=CHAT_MODEL,
@@ -288,16 +339,20 @@ class handler(BaseHTTPRequestHandler):
                     content = chunk.choices[0].delta.content
                     self._send_event("content", {"text": content})
             
+            print("[POST] Stream complete")
             self._send_event("done", {})
             
         except Exception as e:
-            print(f"Chat error: {e}")
+            print(f"[ERROR] Chat error: {e}")
+            traceback.print_exc()
             self._send_event("error", {"message": str(e)})
             self._send_event("done", {})
     
     def _send_event(self, event_type: str, data: dict):
         """Send SSE event."""
         payload = {"type": event_type, **data}
-        self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode())
-        self.wfile.flush()
-
+        try:
+            self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode())
+            self.wfile.flush()
+        except Exception as e:
+            print(f"[ERROR] Failed to send event: {e}")
