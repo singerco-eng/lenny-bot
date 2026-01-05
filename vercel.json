@@ -1,8 +1,17 @@
 {
   "outputDirectory": "dist",
+  "functions": {
+    "api/*.py": {
+      "runtime": "python3.12"
+    }
+  },
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]

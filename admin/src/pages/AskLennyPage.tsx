@@ -28,7 +28,8 @@ const SOURCE_LABELS: Record<string, string> = {
   action: 'Action'
 }
 
-const API_URL = 'http://localhost:8000'
+// Use relative path for Vercel deployment, or localhost for dev
+const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : ''
 
 export default function AskLennyPage() {
   const [messages, setMessages] = useState<Message[]>([
@@ -78,7 +79,9 @@ export default function AskLennyPage() {
     setError(null)
 
     try {
-      const response = await fetch(`${API_URL}/chat/stream`, {
+      // Local dev uses FastAPI endpoint, Vercel uses serverless function
+      const endpoint = import.meta.env.DEV ? '/chat/stream' : '/api/chat'
+      const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,0 +1,4 @@
+# Python dependencies for Vercel serverless functions
+openai>=1.6.0
+supabase>=2.4.0
+
