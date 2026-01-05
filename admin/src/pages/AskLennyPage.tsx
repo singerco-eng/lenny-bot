@@ -118,7 +118,9 @@ export default function AskLennyPage() {
         isStreaming: true
       }])
 
-      while (true) {
+      let streamComplete = false
+      
+      while (!streamComplete) {
         const { done, value } = await reader.read()
         if (done) break
 
@@ -149,12 +151,16 @@ export default function AskLennyPage() {
                     : m
                 ))
               } else if (data.type === 'done') {
-                // Mark as not streaming
+                // Mark as not streaming and exit loop
                 setMessages(prev => prev.map(m => 
                   m.id === assistantMessageId 
                     ? { ...m, isStreaming: false } 
                     : m
                 ))
+                streamComplete = true
+                // Cancel the reader to close connection
+                reader.cancel()
+                break
               } else if (data.type === 'error') {
                 throw new Error(data.message)
               }
