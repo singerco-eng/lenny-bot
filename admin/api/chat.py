@@ -85,8 +85,8 @@ def generate_embedding(text: str) -> Optional[List[float]]:
 def search_app_content(
     query: str,
     content_types: List[str] = None,
-    match_count: int = 15,
-    match_threshold: float = 0.25
+    match_count: int = 25,  # Match local: more results for thorough coverage
+    match_threshold: float = 0.20  # Match local: lower threshold = find more UI locations
 ) -> List[Dict[str, Any]]:
     """Search embedded app content."""
     if content_types is None:
@@ -147,7 +147,7 @@ def build_context(app_results: List[Dict], kb_results: List[Dict]) -> str:
     
     if actions:
         context_parts.append("=== UI ACTIONS (where users can do things) ===")
-        for action in actions[:15]:
+        for action in actions[:20]:  # More actions for better coverage
             title = action.get("title", "")
             description = (action.get("description", "") or "")[:400]
             url = action.get("url_or_path", "")
