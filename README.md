@@ -417,6 +417,10 @@ The Q&A agent needs to understand AccuLynx well enough to answer questions. This
 - `docs/GLOBAL_CONTEXT.md` - AccuLynx product overview
 - `docs/EPIC_KB_GUIDED_CRAWLING.md` - Epic documentation
 
+### Search & Embeddings
+- `docs/EMBEDDING_ENRICHMENT_GUIDE.md` - **How to improve search quality** with KB context and domain concepts
+- `docs/DATABASE_SCHEMA.md` - Database structure and embedding functions
+
 ### Project History  
 - `REFACTORING_PLAN.md` - Detailed migration plan with phases
 - `DEPRECATED.md` - Deprecated components (preserved for future Action Agent)

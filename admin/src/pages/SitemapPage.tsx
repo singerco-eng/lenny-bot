@@ -1,26 +1,8 @@
-import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
-import { createPortal } from 'react-dom'
-import { Link } from 'react-router-dom'
-import {
-  ReactFlow,
-  Node,
-  Edge,
-  Background,
-  Controls,
-  MiniMap,
-  useNodesState,
-  useEdgesState,
-  MarkerType,
-  Position,
-  Handle,
-  EdgeProps,
-  getBezierPath,
-  getSmoothStepPath,
-} from '@xyflow/react'
-import '@xyflow/react/dist/style.css'
+import { useCallback, useEffect, useState, useMemo } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
-// Types for our sitemap data
+// Types
 interface SitemapPage {
   id: string
   url_pattern: string
@@ -29,826 +11,538 @@ interface SitemapPage {
   product_area?: { id: string; name: string } | null
 }
 
-interface NavigationEdge {
-  source_page_id: string
-  target_page_id: string
-  action_count: number
-  actions: string[]
+interface PageComponent {
+  id: string
+  component_name: string
+  component_type: string
+  page_id: string
+  capabilities: string[] | null
+  ai_description: string | null
 }
 
-// Edge data type
-interface EdgeData {
-  actions: string[]
-  action_count: number
-  showLabel?: boolean // Only show ×N label when filtering
+interface PageAction {
+  id: string
+  element_text: string
+  display_label: string | null
+  action_classification: string | null
+  page_id: string
+  navigates_to_page_id: string | null
+  opens_component_id: string | null
+  parent_component_id: string | null
 }
 
-// Product area colors - using AccuLynx palette
-const PRODUCT_AREA_COLORS: Record<string, string> = {
-  'Job Management': '#f97316', // al-orange
-  'Dashboard': '#3b82f6', // al-blue  
-  'Settings': '#6b7280', // gray
-  'Reports': '#10b981', // green
-  'Communications': '#8b5cf6', // purple
-  'default': '#1e3a5f', // al-navy
-}
-
-// Custom node component for pages
-interface PageNodeData {
-  title: string
+interface NavigationTarget {
+  page_id: string
+  page_title: string
   url_pattern: string
-  product_area: string | null
-  action_count: number
-  component_count: number
+  action_labels: string[]
 }
 
-function PageNode({ data }: { data: PageNodeData }) {
-  const [showTooltip, setShowTooltip] = useState(false)
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 })
-  const nodeRef = useRef<HTMLDivElement>(null)
-  const color = PRODUCT_AREA_COLORS[data.product_area || ''] || PRODUCT_AREA_COLORS.default
-  
-  const handleMouseEnter = () => {
-    if (nodeRef.current) {
-      const rect = nodeRef.current.getBoundingClientRect()
-      setTooltipPos({ x: rect.right + 8, y: rect.top })
-    }
-    setShowTooltip(true)
-  }
-  
-  return (
-    <div 
-      ref={nodeRef}
-      className="bg-white rounded-lg shadow-md border-2 px-4 py-3 min-w-[200px] max-w-[280px] cursor-pointer hover:shadow-lg transition-shadow relative"
-      style={{ borderColor: color }}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={() => setShowTooltip(false)}
-    >
-      {/* Handles for connections */}
-      <Handle type="target" position={Position.Top} className="!bg-al-navy !w-3 !h-3" />
-      <Handle type="source" position={Position.Bottom} className="!bg-al-navy !w-3 !h-3" />
-      
-      {/* Title */}
-      <h3 className="font-semibold text-al-text-primary text-sm leading-tight mb-1 truncate">
-        {data.title || 'Untitled Page'}
-      </h3>
-      
-      {/* URL pattern */}
-      <code className="text-[10px] text-al-text-muted block truncate mb-2">
-        {data.url_pattern}
-      </code>
-      
-      {/* Product area & stats */}
-      <div className="flex items-center justify-between text-[10px]">
-        {data.product_area && (
-          <span 
-            className="px-2 py-0.5 rounded-full text-white font-medium"
-            style={{ backgroundColor: color }}
-          >
-            {data.product_area}
-          </span>
-        )}
-        <span className="text-al-text-muted ml-auto">
-          {data.action_count} actions
-        </span>
-      </div>
-
-      {/* Hover tooltip - rendered via portal to appear above everything */}
-      {showTooltip && createPortal(
-        <div 
-          className="fixed bg-al-navy text-white text-xs rounded-lg p-3 shadow-2xl min-w-[180px] pointer-events-none"
-          style={{ left: tooltipPos.x, top: tooltipPos.y, zIndex: 9999 }}
-        >
-          <div className="font-semibold mb-2">{data.title}</div>
-          <div className="space-y-1 text-white/80">
-            <div className="flex justify-between">
-              <span>Actions:</span>
-              <span className="font-medium text-white">{data.action_count}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Components:</span>
-              <span className="font-medium text-white">{data.component_count}</span>
-            </div>
-            {data.product_area && (
-              <div className="flex justify-between">
-                <span>Area:</span>
-                <span className="font-medium text-white">{data.product_area}</span>
-              </div>
-            )}
-          </div>
-          <div className="mt-2 pt-2 border-t border-white/20 text-white/60 text-center">
-            Click to filter connections
-          </div>
-        </div>,
-        document.body
-      )}
-    </div>
-  )
+// Product area colors
+const PRODUCT_AREA_COLORS: Record<string, string> = {
+  'Job Management': '#f97316',
+  'Communications': '#8b5cf6',
+  'Documents': '#3b82f6',
+  'Estimates': '#10b981',
+  'Labor': '#ef4444',
+  'Orders': '#06b6d4',
+  'Payments': '#eab308',
+  'Contacts': '#ec4899',
+  'default': '#1e3a5f',
 }
 
-// Custom edge with hover tooltip
-function CustomEdge({
-  id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  sourcePosition,
-  targetPosition,
-  data,
-  style,
-  markerEnd,
-}: EdgeProps) {
-  const [showTooltip, setShowTooltip] = useState(false)
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
-  const edgeData = data as any as EdgeData | undefined
-  
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-  })
-
-  const actionCount = edgeData?.action_count || 1
-  const actions = edgeData?.actions || []
-  const showLabel = edgeData?.showLabel ?? false
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    setMousePos({ x: e.clientX + 15, y: e.clientY + 15 })
-  }
-
-  return (
-    <g>
-      {/* Visible edge path */}
-      <path
-        id={id}
-        style={{
-          ...style,
-          strokeWidth: 1.5, // Uniform width for all edges
-          stroke: '#1e3a5f',
-          pointerEvents: 'none', // Let the invisible path handle events
-        }}
-        className="react-flow__edge-path"
-        d={edgePath}
-        markerEnd={markerEnd}
-      />
-      {/* Invisible wider path for easier hover - handles all mouse events */}
-      <path
-        d={edgePath}
-        style={{ strokeWidth: 20, stroke: 'transparent', fill: 'none', cursor: 'pointer' }}
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
-        onMouseMove={handleMouseMove}
-      />
-      {/* Label - only show when filtering and action count > 1 */}
-      {showLabel && actionCount > 1 && (
-        <g transform={`translate(${labelX}, ${labelY})`}>
-          <rect
-            x="-12"
-            y="-10"
-            width="24"
-            height="20"
-            rx="4"
-            fill="white"
-            stroke="#e5e7eb"
-          />
-          <text
-            className="text-[10px] font-semibold"
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fill="#1e3a5f"
-          >
-            ×{actionCount}
-          </text>
-        </g>
-      )}
-      {/* Tooltip - rendered via portal to appear above everything */}
-      {showTooltip && actions.length > 0 && createPortal(
-        <div 
-          className="fixed bg-white rounded-lg shadow-2xl border border-al-border p-3 text-xs pointer-events-none"
-          style={{ left: mousePos.x, top: mousePos.y, zIndex: 9999, maxWidth: 240 }}
-        >
-          <p className="font-semibold text-al-text-primary mb-2">
-            {actionCount} action{actionCount > 1 ? 's' : ''}:
-          </p>
-          <ul className="space-y-1 max-h-[150px] overflow-y-auto">
-            {actions.slice(0, 10).map((action, i) => (
-              <li key={i} className="text-al-text-secondary truncate">
-                • {action}
-              </li>
-            ))}
-            {actions.length > 10 && (
-              <li className="text-al-text-muted italic">
-                +{actions.length - 10} more...
-              </li>
-            )}
-          </ul>
-        </div>,
-        document.body
-      )}
-    </g>
-  )
+// Component type colors
+const COMPONENT_TYPE_COLORS: Record<string, string> = {
+  'modal': '#8b5cf6',
+  'drawer': '#06b6d4',
+  'dropdown': '#f59e0b',
+  'tab': '#10b981',
+  'default': '#6b7280',
 }
 
-// Node types registry
-const nodeTypes = {
-  pageNode: PageNode,
-}
-
-// Edge types registry
-const edgeTypes = {
-  custom: CustomEdge,
+// Component type icons
+const COMPONENT_TYPE_ICONS: Record<string, string> = {
+  'modal': '◻',
+  'drawer': '▤',
+  'dropdown': '▾',
+  'tab': '⊟',
+  'default': '○',
 }
 
 export default function SitemapPage() {
+  const navigate = useNavigate()
+  
+  // Tree state
+  const [pages, setPages] = useState<SitemapPage[]>([])
+  const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [nodes, setNodes, onNodesChange] = useNodesState([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState([])
-  const [pageStats, setPageStats] = useState<Record<string, { actions: number; components: number }>>({})
-  const [searchQuery, setSearchQuery] = useState('')
-  const [selectedEdge, setSelectedEdge] = useState<{ actions: string[], source: string, target: string } | null>(null)
-  const [allNodes, setAllNodes] = useState<Node[]>([])
-  const [allEdges, setAllEdges] = useState<Edge[]>([])
-  const [filteredNodeId, setFilteredNodeId] = useState<string | null>(null) // For filtering by node connections
+  
+  // Selected page state
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null)
+  const [selectedPage, setSelectedPage] = useState<SitemapPage | null>(null)
+  const [pageComponents, setPageComponents] = useState<PageComponent[]>([])
+  const [pageActions, setPageActions] = useState<PageAction[]>([])
+  const [navigationTargets, setNavigationTargets] = useState<NavigationTarget[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
 
-  // Fetch sitemap data
+  // Fetch all pages for tree
   useEffect(() => {
-    async function fetchSitemapData() {
-      try {
-        // Fetch all pages
-        const { data: pages, error: pagesError } = await supabase
-          .from('app_pages')
-          .select(`
-            id,
-            url_pattern,
-            title,
-            product_area_id,
-            product_area:product_areas(id, name)
-          `)
-          .order('title')
+    async function fetchPages() {
+      setLoading(true)
+      const { data, error } = await supabase
+        .from('app_pages')
+        .select('id, url_pattern, title, product_area_id, product_area:product_areas(id, name)')
+        .order('title')
 
-        if (pagesError) throw pagesError
-
-        // Fetch navigation actions (edges between pages)
-        const { data: actions, error: actionsError } = await supabase
-          .from('page_actions')
-          .select('page_id, navigates_to_page_id, element_text')
-          .not('navigates_to_page_id', 'is', null)
-
-        if (actionsError) throw actionsError
-
-        // Fetch action counts per page
-        const { data: actionCounts, error: actionCountsError } = await supabase
-          .from('page_actions')
-          .select('page_id')
-
-        if (actionCountsError) throw actionCountsError
-
-        // Fetch component counts per page
-        const { data: componentCounts, error: componentCountsError } = await supabase
-          .from('page_components')
-          .select('page_id')
-
-        if (componentCountsError) throw componentCountsError
-
-        // Calculate stats per page
-        const stats: Record<string, { actions: number; components: number }> = {}
-        actionCounts?.forEach(a => {
-          if (!stats[a.page_id]) stats[a.page_id] = { actions: 0, components: 0 }
-          stats[a.page_id].actions++
-        })
-        componentCounts?.forEach(c => {
-          if (!stats[c.page_id]) stats[c.page_id] = { actions: 0, components: 0 }
-          stats[c.page_id].components++
-        })
-        setPageStats(stats)
-
-        // Build navigation edges with bundling
-        const edgeMap = new Map<string, NavigationEdge>()
-        actions?.forEach(action => {
-          const key = `${action.page_id}->${action.navigates_to_page_id}`
-          if (!edgeMap.has(key)) {
-            edgeMap.set(key, {
-              source_page_id: action.page_id,
-              target_page_id: action.navigates_to_page_id,
-              action_count: 0,
-              actions: [],
-            })
-          }
-          const edge = edgeMap.get(key)!
-          edge.action_count++
-          edge.actions.push(action.element_text)
-        })
-
-        // ===== HIERARCHICAL LAYOUT ALGORITHM =====
-        
-        // Build adjacency lists for graph traversal
-        const outgoingEdges = new Map<string, string[]>() // source -> [targets]
-        const incomingEdges = new Map<string, string[]>() // target -> [sources]
-        
-        Array.from(edgeMap.values()).forEach(edge => {
-          // Skip self-referential edges for layout
-          if (edge.source_page_id === edge.target_page_id) return
-          
-          if (!outgoingEdges.has(edge.source_page_id)) {
-            outgoingEdges.set(edge.source_page_id, [])
-          }
-          outgoingEdges.get(edge.source_page_id)!.push(edge.target_page_id)
-          
-          if (!incomingEdges.has(edge.target_page_id)) {
-            incomingEdges.set(edge.target_page_id, [])
-          }
-          incomingEdges.get(edge.target_page_id)!.push(edge.source_page_id)
-        })
-
-        // Find hub nodes (nodes with most outgoing edges, or most total actions)
-        // These will be at the top of the hierarchy
-        const pageIds = (pages || []).map(p => p.id)
-        const hubScores = pageIds.map(id => ({
-          id,
-          score: (outgoingEdges.get(id)?.length || 0) * 10 + (stats[id]?.actions || 0),
-          outgoing: outgoingEdges.get(id)?.length || 0,
-          incoming: incomingEdges.get(id)?.length || 0,
+      if (error) {
+        console.error('Error fetching pages:', error)
+      } else {
+        setPages(data || [])
+        // Expand all areas by default
+        const areas = new Set((data || []).map(p => {
+          const area = Array.isArray(p.product_area) ? p.product_area[0] : p.product_area
+          return area?.name || 'Uncategorized'
         }))
-        hubScores.sort((a, b) => b.score - a.score)
-        
-        // Calculate depth using BFS from hub nodes
-        const depths = new Map<string, number>()
-        const visited = new Set<string>()
-        const queue: { id: string; depth: number }[] = []
-        
-        // Start with hub nodes at depth 0
-        const hubNodes = hubScores.filter(h => h.outgoing > 0).slice(0, 3).map(h => h.id)
-        if (hubNodes.length === 0 && pageIds.length > 0) {
-          hubNodes.push(pageIds[0]) // Fallback to first page
-        }
-        
-        hubNodes.forEach(hubId => {
-          if (!visited.has(hubId)) {
-            queue.push({ id: hubId, depth: 0 })
-            visited.add(hubId)
-            depths.set(hubId, 0)
-          }
-        })
-        
-        // BFS to assign depths
-        while (queue.length > 0) {
-          const { id, depth } = queue.shift()!
-          const targets = outgoingEdges.get(id) || []
-          
-          targets.forEach(targetId => {
-            if (!visited.has(targetId)) {
-              visited.add(targetId)
-              depths.set(targetId, depth + 1)
-              queue.push({ id: targetId, depth: depth + 1 })
-            }
-          })
-        }
-        
-        // Assign remaining unvisited nodes to the bottom
-        const maxDepth = Math.max(...Array.from(depths.values()), 0)
-        pageIds.forEach(id => {
-          if (!depths.has(id)) {
-            depths.set(id, maxDepth + 1)
-          }
-        })
-        
-        // Group nodes by depth level
-        const levelGroups = new Map<number, typeof pages>()
-        ;(pages || []).forEach(page => {
-          const depth = depths.get(page.id) || 0
-          if (!levelGroups.has(depth)) {
-            levelGroups.set(depth, [])
-          }
-          levelGroups.get(depth)!.push(page)
-        })
-        
-        // Layout constants
-        const NODE_WIDTH = 280
-        const NODE_HEIGHT = 100
-        const HORIZONTAL_GAP = 60
-        const VERTICAL_GAP = 150
-        const CANVAS_PADDING = 50
-        
-        // Calculate positions for each node
-        const positions = new Map<string, { x: number; y: number }>()
-        const sortedLevels = Array.from(levelGroups.keys()).sort((a, b) => a - b)
-        
-        // Find max width needed (for centering)
-        let maxLevelWidth = 0
-        sortedLevels.forEach(level => {
-          const nodesInLevel = levelGroups.get(level)!.length
-          const levelWidth = nodesInLevel * NODE_WIDTH + (nodesInLevel - 1) * HORIZONTAL_GAP
-          maxLevelWidth = Math.max(maxLevelWidth, levelWidth)
-        })
-        
-        // Position nodes level by level
-        sortedLevels.forEach(level => {
-          const nodesInLevel = levelGroups.get(level)!
-          const levelWidth = nodesInLevel.length * NODE_WIDTH + (nodesInLevel.length - 1) * HORIZONTAL_GAP
-          const startX = CANVAS_PADDING + (maxLevelWidth - levelWidth) / 2
-          const y = CANVAS_PADDING + level * (NODE_HEIGHT + VERTICAL_GAP)
-          
-          // Sort nodes within level by connection count for better visual flow
-          nodesInLevel.sort((a, b) => {
-            const aConnections = (outgoingEdges.get(a.id)?.length || 0) + (incomingEdges.get(a.id)?.length || 0)
-            const bConnections = (outgoingEdges.get(b.id)?.length || 0) + (incomingEdges.get(b.id)?.length || 0)
-            return bConnections - aConnections
-          })
-          
-          nodesInLevel.forEach((page, index) => {
-            const x = startX + index * (NODE_WIDTH + HORIZONTAL_GAP)
-            positions.set(page.id, { x, y })
-          })
-        })
-
-        // Create nodes with calculated positions
-        const pageNodes: Node[] = (pages || []).map((page) => {
-          const productAreaName = Array.isArray(page.product_area) 
-            ? page.product_area[0]?.name 
-            : page.product_area?.name
-          
-          const pos = positions.get(page.id) || { x: 0, y: 0 }
-          
-          return {
-            id: page.id,
-            type: 'pageNode',
-            position: pos,
-            data: {
-              title: page.title || page.url_pattern,
-              url_pattern: page.url_pattern,
-              product_area: productAreaName || null,
-              action_count: stats[page.id]?.actions || 0,
-              component_count: stats[page.id]?.components || 0,
-            },
-          }
-        })
-
-        // Create edges with custom type - all solid lines
-        const navEdges: Edge[] = Array.from(edgeMap.values()).map((edge, index) => ({
-          id: `edge-${index}`,
-          source: edge.source_page_id,
-          target: edge.target_page_id,
-          type: 'custom',
-          animated: false,
-          data: {
-            actions: edge.actions,
-            action_count: edge.action_count,
-          },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: '#1e3a5f',
-          },
-        }))
-
-        setAllNodes(pageNodes)
-        setAllEdges(navEdges)
-        setNodes(pageNodes)
-        setEdges(navEdges)
-      } catch (err: any) {
-        console.error('Error fetching sitemap data:', err)
-        setError(err.message || 'Failed to load sitemap')
-      } finally {
-        setLoading(false)
+        setExpandedAreas(areas)
       }
+      setLoading(false)
     }
-
-    fetchSitemapData()
+    fetchPages()
   }, [])
 
-  // Filter nodes based on search OR selected node
+  // Fetch page details when selected
   useEffect(() => {
-    // If filtering by a specific node
-    if (filteredNodeId) {
-      // Find all edges connected to this node
-      const connectedNodeIds = new Set<string>([filteredNodeId])
-      const connectedEdgeIds = new Set<string>()
-      
-      allEdges.forEach(edge => {
-        if (edge.source === filteredNodeId || edge.target === filteredNodeId) {
-          connectedNodeIds.add(edge.source)
-          connectedNodeIds.add(edge.target)
-          connectedEdgeIds.add(edge.id)
-        }
-      })
-      
-      // Style nodes - highlight connected, fade others
-      const filteredNodes = allNodes.map(node => ({
-        ...node,
-        style: connectedNodeIds.has(node.id) ? {} : { opacity: 0.15 },
-      }))
-      
-      // Style edges - highlight connected (with labels), fade others
-      const filteredEdges = allEdges.map(edge => {
-        const isConnected = connectedEdgeIds.has(edge.id)
-        const edgeData = edge.data as any as EdgeData
-        return {
-          ...edge,
-          style: isConnected ? {} : { opacity: 0.1 },
-          data: {
-            ...edgeData,
-            showLabel: isConnected, // Show ×N label only for connected edges
-          },
-        }
-      })
-      
-      setNodes(filteredNodes)
-      setEdges(filteredEdges)
+    if (!selectedPageId) {
+      setSelectedPage(null)
+      setPageComponents([])
+      setPageActions([])
+      setNavigationTargets([])
       return
     }
-    
-    // If searching by text
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase()
-      const matchingNodeIds = new Set<string>()
+
+    async function fetchPageDetails() {
+      setDetailLoading(true)
       
-      // Find matching nodes
-      const filteredNodes = allNodes.map(node => {
-        const data = node.data as any as PageNodeData
-        const matches = 
-          data.title.toLowerCase().includes(query) ||
-          data.url_pattern.toLowerCase().includes(query) ||
-          (data.product_area?.toLowerCase().includes(query))
-        
-        if (matches) {
-          matchingNodeIds.add(node.id)
-        }
-        
-        return {
-          ...node,
-          style: matches ? {} : { opacity: 0.2 },
-        }
-      })
+      // Fetch page info
+      const { data: pageData } = await supabase
+        .from('app_pages')
+        .select('id, url_pattern, title, product_area_id, product_area:product_areas(id, name)')
+        .eq('id', selectedPageId)
+        .single()
+      
+      if (pageData) {
+        setSelectedPage(pageData)
+      }
 
-      // Filter edges to only show those connected to matching nodes
-      const filteredEdges = allEdges.map(edge => ({
-        ...edge,
-        style: matchingNodeIds.has(edge.source) || matchingNodeIds.has(edge.target)
-          ? {}
-          : { opacity: 0.1 },
-      }))
+      // Fetch components on this page
+      const { data: components } = await supabase
+        .from('page_components')
+        .select('id, component_name, component_type, page_id, capabilities, description')
+        .eq('page_id', selectedPageId)
+        .order('component_name')
 
-      setNodes(filteredNodes)
-      setEdges(filteredEdges)
-      return
+      setPageComponents(components || [])
+
+      // Fetch all actions on this page
+      const { data: actions } = await supabase
+        .from('page_actions')
+        .select('id, element_text, display_label, action_classification, page_id, navigates_to_page_id, opens_component_id, parent_component_id')
+        .eq('page_id', selectedPageId)
+
+      setPageActions(actions || [])
+
+      // Build navigation targets
+      const navActions = (actions || []).filter(a => a.navigates_to_page_id && a.navigates_to_page_id !== selectedPageId)
+      const targetPageIds = [...new Set(navActions.map(a => a.navigates_to_page_id!))]
+      
+      if (targetPageIds.length > 0) {
+        const { data: targetPages } = await supabase
+          .from('app_pages')
+          .select('id, url_pattern, title')
+          .in('id', targetPageIds)
+
+        const targets: NavigationTarget[] = (targetPages || []).map(tp => ({
+          page_id: tp.id,
+          page_title: tp.title || tp.url_pattern,
+          url_pattern: tp.url_pattern,
+          action_labels: navActions
+            .filter(a => a.navigates_to_page_id === tp.id)
+            .map(a => a.display_label || a.element_text)
+        }))
+        setNavigationTargets(targets)
+      } else {
+        setNavigationTargets([])
+      }
+
+      setDetailLoading(false)
     }
-    
-    // No filter - show all (without labels)
-    setNodes(allNodes)
-    // Ensure showLabel is false when no filter
-    const edgesWithoutLabels = allEdges.map(edge => ({
-      ...edge,
-      data: {
-        ...(edge.data as any as EdgeData),
-        showLabel: false,
-      },
+
+    fetchPageDetails()
+  }, [selectedPageId])
+
+  // Group pages by product area for tree
+  const pagesByArea = useMemo(() => {
+    const groups = new Map<string, SitemapPage[]>()
+    pages.forEach(page => {
+      const area = Array.isArray(page.product_area) 
+        ? page.product_area[0]?.name 
+        : page.product_area?.name
+      const areaName = area || 'Uncategorized'
+      if (!groups.has(areaName)) {
+        groups.set(areaName, [])
+      }
+      groups.get(areaName)!.push(page)
+    })
+    // Sort areas alphabetically, but put Uncategorized last
+    return new Map([...groups.entries()].sort((a, b) => {
+      if (a[0] === 'Uncategorized') return 1
+      if (b[0] === 'Uncategorized') return -1
+      return a[0].localeCompare(b[0])
     }))
-    setEdges(edgesWithoutLabels)
-  }, [searchQuery, filteredNodeId, allNodes, allEdges])
+  }, [pages])
 
-  // Handle node click - filter to show only connections to this node
-  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
-    // Toggle filter - if clicking the same node, clear the filter
-    if (filteredNodeId === node.id) {
-      setFilteredNodeId(null)
+  // Get actions for a specific component
+  const getComponentActions = useCallback((componentId: string) => {
+    return pageActions.filter(a => a.parent_component_id === componentId)
+  }, [pageActions])
+
+  // Get page-level actions (not inside any component)
+  const getPageLevelActions = useMemo(() => {
+    return pageActions.filter(a => !a.parent_component_id && !a.navigates_to_page_id)
+  }, [pageActions])
+
+  // Toggle area expansion
+  const toggleArea = (area: string) => {
+    const newExpanded = new Set(expandedAreas)
+    if (newExpanded.has(area)) {
+      newExpanded.delete(area)
     } else {
-      setFilteredNodeId(node.id)
-      setSearchQuery('') // Clear search when filtering by node
+      newExpanded.add(area)
     }
-  }, [filteredNodeId])
-  
-  // Get the filtered node's title for the chip
-  const filteredNodeTitle = useMemo(() => {
-    if (!filteredNodeId) return null
-    const node = allNodes.find(n => n.id === filteredNodeId)
-    return node ? (node.data as any as PageNodeData).title : null
-  }, [filteredNodeId, allNodes])
-  
-  // Get the filtered node's URL pattern for the "View Details" link
-  const filteredNodeUrl = useMemo(() => {
-    if (!filteredNodeId) return null
-    const node = allNodes.find(n => n.id === filteredNodeId)
-    return node ? (node.data as any as PageNodeData).url_pattern : null
-  }, [filteredNodeId, allNodes])
+    setExpandedAreas(newExpanded)
+  }
 
-  // Handle edge click - show actions modal
-  const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
-    const edgeData = edge.data as any as EdgeData | undefined
-    if (edgeData) {
-      // Find source and target node titles
-      const sourceNode = allNodes.find(n => n.id === edge.source)
-      const targetNode = allNodes.find(n => n.id === edge.target)
-      setSelectedEdge({
-        actions: edgeData.actions,
-        source: (sourceNode?.data as any as PageNodeData)?.title || 'Unknown',
-        target: (targetNode?.data as any as PageNodeData)?.title || 'Unknown',
-      })
-    }
-  }, [allNodes])
+  // Handle page selection from tree
+  const handlePageSelect = (pageId: string) => {
+    setSelectedPageId(pageId === selectedPageId ? null : pageId)
+  }
 
-  // MiniMap node color
-  const nodeColor = useCallback((node: Node) => {
-    const productArea = (node.data as any as PageNodeData).product_area
-    return PRODUCT_AREA_COLORS[productArea || ''] || PRODUCT_AREA_COLORS.default
-  }, [])
+  // Navigate to page details
+  const goToPageDetails = (urlPattern: string) => {
+    navigate(`/pages/${encodeURIComponent(urlPattern)}`)
+  }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-al-bg flex items-center justify-center">
-        <div className="text-al-text-secondary">Loading sitemap...</div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen bg-al-bg flex items-center justify-center">
-        <div className="text-red-500">Error: {error}</div>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-slate-500">Loading...</div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-al-bg flex flex-col">
+    <div className="min-h-screen bg-slate-50 flex flex-col">
       {/* Header */}
-      <header className="bg-gradient-to-r from-al-navy-dark to-al-navy h-16 flex items-center px-6 justify-between flex-shrink-0">
+      <header className="bg-gradient-to-r from-slate-800 to-slate-700 h-14 flex items-center px-6 justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-white text-xl font-semibold tracking-wide">
-            ACCU<span className="text-al-orange">LYNX</span>
+          <span className="text-white text-lg font-semibold">
+            ACCU<span className="text-orange-400">LYNX</span>
           </span>
-          <span className="text-white/50">|</span>
-          <span className="text-white/80 text-sm">Navigation Sitemap</span>
+          <span className="text-white/40">|</span>
+          <span className="text-white/80 text-sm">Component Explorer</span>
         </div>
         <div className="flex items-center gap-4">
-          <div className="text-white/80 text-sm">
-            {nodes.length} pages · {edges.length} connections
+          <div className="text-white/70 text-sm">
+            {pages.length} pages · {pageComponents.length} components
           </div>
-          <Link to="/" className="text-al-blue-light hover:text-white flex items-center gap-2">
-            ← Back to Dashboard
+          <Link to="/" className="text-blue-300 hover:text-white text-sm">
+            ← Dashboard
           </Link>
         </div>
       </header>
 
-      {/* Legend + Search + Active Filter */}
-      <div className="bg-al-surface border-b border-al-border px-6 py-3 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-6">
-          <span className="text-xs font-semibold text-al-text-secondary uppercase">Product Areas:</span>
-          {Object.entries(PRODUCT_AREA_COLORS).filter(([k]) => k !== 'default').map(([name, color]) => (
-            <div key={name} className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
-              <span className="text-xs text-al-text-primary">{name}</span>
-            </div>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          {/* Active filter chip */}
-          {filteredNodeTitle && (
-            <div className="flex items-center gap-2 bg-al-blue/10 border border-al-blue/30 rounded-full px-3 py-1.5">
-              <span className="text-xs font-medium text-al-blue">
-                Showing: {filteredNodeTitle}
-              </span>
-              <Link 
-                to={`/pages/${encodeURIComponent(filteredNodeUrl || '')}`}
-                className="text-xs text-al-blue hover:underline"
-              >
-                View Details
-              </Link>
-              <button
-                onClick={() => setFilteredNodeId(null)}
-                className="text-al-blue hover:text-al-blue-dark ml-1"
-                title="Clear filter"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          )}
+      {/* Main Content */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Tree Sidebar */}
+        <div className="w-72 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
+            <h3 className="font-semibold text-slate-700 flex items-center gap-2">
+              <span>🌳</span> Pages
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">Click to explore components</p>
+          </div>
           
-          {/* Search input - hidden when filter is active */}
-          {!filteredNodeId && (
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search pages..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-64 px-4 py-2 pr-8 text-sm border border-al-border rounded-lg focus:outline-none focus:border-al-blue focus:ring-1 focus:ring-al-blue bg-white"
-              />
-              {searchQuery && (
+          <div className="flex-1 overflow-y-auto">
+            {Array.from(pagesByArea.entries()).map(([areaName, areaPages]) => (
+              <div key={areaName} className="border-b border-slate-100 last:border-0">
+                {/* Area header */}
                 <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-al-text-muted hover:text-al-text-primary"
+                  onClick={() => toggleArea(areaName)}
+                  className="w-full px-4 py-2 flex items-center justify-between hover:bg-slate-50 transition-colors"
                 >
-                  ✕
+                  <div className="flex items-center gap-2">
+                    <span 
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: PRODUCT_AREA_COLORS[areaName] || PRODUCT_AREA_COLORS.default }}
+                    />
+                    <span className="font-medium text-slate-700 text-sm">{areaName}</span>
+                    <span className="text-xs text-slate-400">{areaPages.length}</span>
+                  </div>
+                  <svg 
+                    className={`w-4 h-4 text-slate-400 transition-transform ${expandedAreas.has(areaName) ? 'rotate-180' : ''}`}
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
                 </button>
-              )}
-            </div>
-          )}
-          
-          <span className="text-xs text-al-text-muted">
-            {filteredNodeId 
-              ? 'Click page again or ✕ to clear filter' 
-              : 'Click a page to filter its connections'}
-          </span>
-        </div>
-      </div>
 
-      {/* Canvas */}
-      <div style={{ width: '100%', height: 'calc(100vh - 112px)' }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={onNodeClick}
-          onEdgeClick={onEdgeClick}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
-          minZoom={0.1}
-          maxZoom={2}
-          style={{ background: '#f5f6f8' }}
-        >
-          <Background color="#e5e7eb" gap={20} />
-          <Controls 
-            className="!bg-white !shadow-md !border !border-al-border !rounded-lg"
-            position="bottom-left"
-          />
-          <MiniMap 
-            nodeColor={nodeColor}
-            className="!bg-white !shadow-md !border !border-al-border !rounded-lg"
-            maskColor="rgba(0,0,0,0.1)"
-            position="bottom-right"
-          />
-        </ReactFlow>
-      </div>
-
-      {/* Edge Detail Modal */}
-      {selectedEdge && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-          onClick={() => setSelectedEdge(null)}
-        >
-          <div
-            className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[80vh] overflow-hidden flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-al-border flex justify-between items-start bg-al-bg">
-              <div>
-                <h2 className="text-lg font-semibold text-al-text-primary">
-                  Navigation Actions
-                </h2>
-                <p className="text-sm text-al-text-secondary mt-1">
-                  {selectedEdge.source} → {selectedEdge.target}
-                </p>
+                {/* Pages in area */}
+                {expandedAreas.has(areaName) && (
+                  <div className="pb-1">
+                    {areaPages.map(page => (
+                      <button
+                        key={page.id}
+                        onClick={() => handlePageSelect(page.id)}
+                        className={`w-full px-4 py-1.5 pl-8 text-left text-sm transition-colors ${
+                          selectedPageId === page.id
+                            ? 'bg-blue-50 text-blue-700 border-l-2 border-blue-500'
+                            : 'text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate block">{page.title || page.url_pattern}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-              <button
-                onClick={() => setSelectedEdge(null)}
-                className="text-al-text-muted hover:text-al-text-primary p-1"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-6">
-              <p className="text-sm text-al-text-secondary mb-4">
-                {selectedEdge.actions.length} action{selectedEdge.actions.length > 1 ? 's' : ''} navigate from this page:
-              </p>
-              <ul className="space-y-2">
-                {selectedEdge.actions.map((action, i) => (
-                  <li key={i} className="flex items-center gap-3 p-3 bg-al-bg rounded-lg">
-                    <span className="w-6 h-6 bg-al-navy text-white rounded-full flex items-center justify-center text-xs font-medium">
-                      {i + 1}
-                    </span>
-                    <span className="text-sm text-al-text-primary">{action}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-al-border bg-al-bg">
-              <button
-                onClick={() => setSelectedEdge(null)}
-                className="w-full bg-al-navy text-white py-2 px-4 rounded-lg hover:bg-al-navy-dark transition-colors"
-              >
-                Close
-              </button>
-            </div>
+            ))}
           </div>
         </div>
-      )}
+
+        {/* Detail Canvas */}
+        <div className="flex-1 overflow-auto p-6">
+          {!selectedPageId ? (
+            // Empty state - nothing shown
+            <div />
+          ) : detailLoading ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-slate-400">Loading...</div>
+            </div>
+          ) : selectedPage ? (
+            <div className="max-w-5xl mx-auto">
+              {/* Page Header Card */}
+              <div 
+                className="bg-white rounded-xl shadow-sm border-2 p-6 mb-8"
+                style={{ borderColor: PRODUCT_AREA_COLORS[
+                  (Array.isArray(selectedPage.product_area) 
+                    ? selectedPage.product_area[0]?.name 
+                    : selectedPage.product_area?.name) || ''
+                ] || PRODUCT_AREA_COLORS.default }}
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h1 className="text-2xl font-bold text-slate-800">
+                      {selectedPage.title || 'Untitled Page'}
+                    </h1>
+                    <code className="text-sm text-slate-500 mt-1 block">
+                      {selectedPage.url_pattern}
+                    </code>
+                  </div>
+                  <button
+                    onClick={() => goToPageDetails(selectedPage.url_pattern)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg transition-colors"
+                  >
+                    View Details →
+                  </button>
+                </div>
+                <div className="flex gap-4 mt-4 text-sm">
+                  <span className="px-3 py-1 bg-slate-100 rounded-full text-slate-600">
+                    {pageActions.length} actions
+                  </span>
+                  <span className="px-3 py-1 bg-slate-100 rounded-full text-slate-600">
+                    {pageComponents.length} components
+                  </span>
+                  {(Array.isArray(selectedPage.product_area) 
+                    ? selectedPage.product_area[0]?.name 
+                    : selectedPage.product_area?.name) && (
+                    <span 
+                      className="px-3 py-1 rounded-full text-white"
+                      style={{ backgroundColor: PRODUCT_AREA_COLORS[
+                        (Array.isArray(selectedPage.product_area) 
+                          ? selectedPage.product_area[0]?.name 
+                          : selectedPage.product_area?.name) || ''
+                      ] || PRODUCT_AREA_COLORS.default }}
+                    >
+                      {Array.isArray(selectedPage.product_area) 
+                        ? selectedPage.product_area[0]?.name 
+                        : selectedPage.product_area?.name}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Components Grid */}
+              {pageComponents.length > 0 && (
+                <div className="mb-8">
+                  <h2 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
+                    <span>📦</span> Components
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {pageComponents.map(component => {
+                      const componentActions = getComponentActions(component.id)
+                      const color = COMPONENT_TYPE_COLORS[component.component_type] || COMPONENT_TYPE_COLORS.default
+                      const icon = COMPONENT_TYPE_ICONS[component.component_type] || COMPONENT_TYPE_ICONS.default
+                      
+                      return (
+                        <div 
+                          key={component.id}
+                          className="bg-white rounded-lg shadow-sm border-l-4 p-4 hover:shadow-md transition-shadow"
+                          style={{ borderColor: color }}
+                        >
+                          {/* Component Header */}
+                          <div className="flex items-start justify-between mb-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span style={{ color }} className="text-lg">{icon}</span>
+                                <h3 className="font-semibold text-slate-800">
+                                  {component.component_name}
+                                </h3>
+                              </div>
+                              <span 
+                                className="text-xs px-2 py-0.5 rounded-full mt-1 inline-block"
+                                style={{ backgroundColor: `${color}20`, color }}
+                              >
+                                {component.component_type}
+                              </span>
+                            </div>
+                            <span className="text-xs text-slate-400">
+                              {componentActions.length} actions
+                            </span>
+                          </div>
+
+                          {/* Component Description */}
+                          {component.description && (
+                            <p className="text-xs text-slate-500 mb-3 line-clamp-2">
+                              {component.description}
+                            </p>
+                          )}
+
+                          {/* Actions List */}
+                          {componentActions.length > 0 && (
+                            <div className="space-y-1">
+                              {componentActions.slice(0, 6).map(action => (
+                                <div 
+                                  key={action.id}
+                                  className="text-sm text-slate-600 flex items-center gap-2 py-1 px-2 bg-slate-50 rounded"
+                                >
+                                  <span className="text-slate-400">•</span>
+                                  <span className="truncate">
+                                    {action.display_label || action.element_text}
+                                  </span>
+                                  {action.navigates_to_page_id && (
+                                    <span className="text-blue-400 text-xs ml-auto">→</span>
+                                  )}
+                                </div>
+                              ))}
+                              {componentActions.length > 6 && (
+                                <div className="text-xs text-slate-400 px-2">
+                                  +{componentActions.length - 6} more
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Capabilities */}
+                          {component.capabilities && component.capabilities.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-3 pt-3 border-t border-slate-100">
+                              {component.capabilities.map((cap, i) => (
+                                <span 
+                                  key={i}
+                                  className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded"
+                                >
+                                  {cap}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Page-Level Actions (not in any component) */}
+              {getPageLevelActions.length > 0 && (
+                <div className="mb-8">
+                  <h2 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
+                    <span>⚡</span> Page Actions
+                  </h2>
+                  <div className="bg-white rounded-lg shadow-sm p-4">
+                    <div className="flex flex-wrap gap-2">
+                      {getPageLevelActions.map(action => (
+                        <span 
+                          key={action.id}
+                          className="text-sm px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg"
+                        >
+                          {action.display_label || action.element_text}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Navigation Footer */}
+              {navigationTargets.length > 0 && (
+                <div className="bg-slate-100 rounded-xl p-6">
+                  <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">
+                    Navigates To
+                  </h2>
+                  <div className="flex flex-wrap gap-3">
+                    {navigationTargets.map(target => (
+                      <button
+                        key={target.page_id}
+                        onClick={() => handlePageSelect(target.page_id)}
+                        className="group bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-lg px-4 py-3 text-left transition-all hover:shadow-sm"
+                      >
+                        <div className="font-medium text-slate-700 group-hover:text-blue-700">
+                          {target.page_title}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          {target.action_labels.length} action{target.action_labels.length !== 1 ? 's' : ''}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-4">
+                    Click to explore that page's components
+                  </p>
+                </div>
+              )}
+
+              {/* Empty components state */}
+              {pageComponents.length === 0 && getPageLevelActions.length === 0 && navigationTargets.length === 0 && (
+                <div className="bg-white rounded-lg shadow-sm p-8 text-center">
+                  <div className="text-4xl mb-3">📭</div>
+                  <h3 className="text-lg font-medium text-slate-700 mb-2">No Components Yet</h3>
+                  <p className="text-slate-500 text-sm">
+                    This page hasn't been fully explored yet.
+                  </p>
+                  <button
+                    onClick={() => goToPageDetails(selectedPage.url_pattern)}
+                    className="mt-4 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    View Page Details
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }
-

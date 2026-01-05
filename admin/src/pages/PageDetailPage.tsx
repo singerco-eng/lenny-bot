@@ -170,7 +170,18 @@ export default function PageDetailPage() {
     return parts
   }
 
+  // Get display text for an action - prefers display_label if set
+  const getActionDisplayText = (action: PageAction): string => {
+    // If we have a display_label, use it directly
+    if (action.display_label) {
+      return action.display_label
+    }
+    // Otherwise fall back to cleaning element_text
+    return cleanElementText(action.element_text)
+  }
+
   // Clean element_text for display - remove counts and generalize job-specific data
+  // Used as fallback when display_label is not set
   const cleanElementText = (text: string): string => {
     let cleaned = text
     
@@ -540,7 +551,7 @@ export default function PageDetailPage() {
                           <td className="px-4 py-3 border-b border-al-border-light">
                             <div>
                               <p className="text-sm font-medium text-al-text-primary">
-                                {cleanElementText(action.element_text)}
+                                {getActionDisplayText(action)}
                               </p>
                               {action.description && (
                                 <p className="text-xs text-al-text-muted line-clamp-2 mt-1">
@@ -598,7 +609,7 @@ export default function PageDetailPage() {
               <div className="px-6 py-4 border-b border-al-border flex justify-between items-start">
                 <div>
                   <h2 className="text-xl font-semibold text-al-text-primary">
-                    {cleanElementText(selectedAction.element_text)}
+                    {getActionDisplayText(selectedAction)}
                   </h2>
                   <div className="flex items-center gap-2 mt-2">
                     <span className="text-xs px-2 py-1 rounded bg-al-bg text-al-text-secondary uppercase">

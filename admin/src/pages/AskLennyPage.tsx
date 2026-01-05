@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 
 interface Message {
@@ -7,6 +7,7 @@ interface Message {
   content: string
   sources?: Source[]
   timestamp: Date
+  isStreaming?: boolean
 }
 
 interface Source {
@@ -19,6 +20,14 @@ interface Source {
   similarity: number
 }
 
+// Source type labels
+const SOURCE_LABELS: Record<string, string> = {
+  article: 'KB',
+  page: 'Page',
+  component: 'Component',
+  action: 'Action'
+}
+
 const API_URL = 'http://localhost:8000'
 
 export default function AskLennyPage() {
@@ -26,27 +35,33 @@ export default function AskLennyPage() {
     {
       id: '1',
       role: 'assistant',
-      content: "👋 Hi! I'm **Lenny**, your AccuLynx assistant. I can help you find features, understand workflows, and navigate the application.\n\nTry asking me things like:\n- \"How do I create an appointment?\"\n- \"Where can I upload photos?\"\n- \"What are supplements?\"\n- \"How do I manage labor tickets?\"",
+      content: "👋 Hi! I'm **Lenny**, your AccuLynx assistant. I can help you find features, understand workflows, and navigate the application.\n\nTry asking me things like:\n- \"Where can I take a payment?\"\n- \"How do I create an appointment?\"\n- \"What are supplements?\"",
       timestamp: new Date()
     }
   ])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showSources, setShowSources] = useState<string | null>(null)
+  const [expandedSources, setExpandedSources] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  }, [])
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages])
+  }, [messages, scrollToBottom])
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return
+
+    // Cancel any ongoing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    abortControllerRef.current = new AbortController()
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -55,13 +70,15 @@ export default function AskLennyPage() {
       timestamp: new Date()
     }
 
+    const assistantMessageId = (Date.now() + 1).toString()
+
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
     setError(null)
 
     try {
-      const response = await fetch(`${API_URL}/chat`, {
+      const response = await fetch(`${API_URL}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -71,29 +88,92 @@ export default function AskLennyPage() {
             content: m.content
           })),
           include_sources: true
-        })
+        }),
+        signal: abortControllerRef.current.signal
       })
 
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
       }
 
-      const data = await response.json()
-
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: data.response,
-        sources: data.sources,
-        timestamp: new Date()
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('No response body')
       }
 
-      setMessages(prev => [...prev, assistantMessage])
+      const decoder = new TextDecoder()
+      let streamedContent = ''
+      let sources: Source[] = []
+
+      // Add empty assistant message that we'll stream into
+      setMessages(prev => [...prev, {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        sources: [],
+        timestamp: new Date(),
+        isStreaming: true
+      }])
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value)
+        const lines = chunk.split('\n')
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+
+              if (data.type === 'sources') {
+                sources = data.sources
+                
+                // Update message with sources
+                setMessages(prev => prev.map(m => 
+                  m.id === assistantMessageId 
+                    ? { ...m, sources } 
+                    : m
+                ))
+              } else if (data.type === 'content') {
+                streamedContent += data.text
+                
+                // Update message content
+                setMessages(prev => prev.map(m => 
+                  m.id === assistantMessageId 
+                    ? { ...m, content: streamedContent } 
+                    : m
+                ))
+              } else if (data.type === 'done') {
+                // Mark as not streaming
+                setMessages(prev => prev.map(m => 
+                  m.id === assistantMessageId 
+                    ? { ...m, isStreaming: false } 
+                    : m
+                ))
+              } else if (data.type === 'error') {
+                throw new Error(data.message)
+              }
+            } catch (parseError) {
+              // Ignore parse errors for incomplete chunks
+            }
+          }
+        }
+      }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Request was cancelled, ignore
+        return
+      }
       setError(err instanceof Error ? err.message : 'Failed to get response')
       console.error('Chat error:', err)
+      
+      // Remove the empty assistant message on error
+      setMessages(prev => prev.filter(m => m.id !== assistantMessageId))
     } finally {
       setIsLoading(false)
+      abortControllerRef.current = null
     }
   }
 
@@ -105,59 +185,62 @@ export default function AskLennyPage() {
   }
 
   const formatContent = (content: string) => {
-    // Simple markdown-like formatting
     return content
       .split('\n')
-      .map((line, i) => {
-        // Bold
+      .map((line) => {
         line = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        // Inline code
-        line = line.replace(/`(.*?)`/g, '<code class="bg-al-navy/10 px-1 rounded text-sm">$1</code>')
-        // Lists
+        line = line.replace(/`(.*?)`/g, '<code class="bg-white/10 px-1.5 py-0.5 rounded text-sm font-mono">$1</code>')
         if (line.startsWith('- ')) {
-          return `<li class="ml-4">${line.slice(2)}</li>`
+          return `<li class="ml-4 list-disc">${line.slice(2)}</li>`
         }
         if (/^\d+\.\s/.test(line)) {
           return `<li class="ml-4 list-decimal">${line.replace(/^\d+\.\s/, '')}</li>`
         }
-        return line ? `<p>${line}</p>` : '<br/>'
+        return line ? `<p class="mb-2">${line}</p>` : ''
       })
       .join('')
   }
 
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case 'page': return 'bg-blue-100 text-blue-800'
-      case 'component': return 'bg-purple-100 text-purple-800'
-      case 'action': return 'bg-cyan-100 text-cyan-800'
-      default: return 'bg-gray-100 text-gray-800'
-    }
+  const getSourceLabel = (type: string) => {
+    return SOURCE_LABELS[type] || 'Source'
+  }
+
+  // Group sources by type for chips
+  const groupSourcesByType = (sources: Source[]) => {
+    const groups: Record<string, Source[]> = {}
+    sources.forEach(s => {
+      if (!groups[s.content_type]) {
+        groups[s.content_type] = []
+      }
+      groups[s.content_type].push(s)
+    })
+    return groups
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col">
+    <div className="min-h-screen bg-slate-900 flex flex-col">
       {/* Header */}
-      <header className="bg-black/20 backdrop-blur-sm border-b border-white/10 px-6 py-4">
+      <header className="border-b border-white/10 px-6 py-4">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link to="/" className="text-white/60 hover:text-white transition-colors">
+            <Link to="/" className="text-white/40 hover:text-white/70 transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
             </Link>
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/20 overflow-hidden">
-                <img src="/lenny.jpg" alt="Lenny" className="w-16 h-16 object-cover object-top scale-125" />
+              <div className="w-10 h-10 rounded-full bg-al-orange overflow-hidden">
+                <img src="/lenny.jpg" alt="Lenny" className="w-14 h-14 object-cover object-top scale-125" />
               </div>
               <div>
-                <h1 className="text-white font-semibold">Ask Lenny</h1>
-                <p className="text-white/50 text-xs">AccuLynx AI Assistant</p>
+                <h1 className="text-white font-medium">Ask Lenny</h1>
+                <p className="text-white/40 text-xs">AccuLynx Assistant</p>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
-            <span className="text-green-400 text-sm">Online</span>
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+            <span className="text-white/40 text-xs">Online</span>
           </div>
         </div>
       </header>
@@ -171,102 +254,87 @@ export default function AskLennyPage() {
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div className={`max-w-[85%] ${message.role === 'user' ? 'order-2' : ''}`}>
-                {/* Avatar */}
+                {/* Avatar for assistant */}
                 {message.role === 'assistant' && (
                   <div className="flex items-center gap-2 mb-2">
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center overflow-hidden">
-                      <img src="/lenny.jpg" alt="Lenny" className="w-10 h-10 object-cover object-top scale-125" />
+                    <div className="w-6 h-6 rounded-full bg-al-orange overflow-hidden">
+                      <img src="/lenny.jpg" alt="Lenny" className="w-8 h-8 object-cover object-top scale-125" />
                     </div>
-                    <span className="text-white/40 text-xs">Lenny</span>
+                    <span className="text-white/30 text-xs">Lenny</span>
+                  </div>
+                )}
+
+                {/* Source Chips - shown above assistant messages */}
+                {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {Object.entries(groupSourcesByType(message.sources)).map(([type, sources]) => (
+                      <button
+                        key={type}
+                        onClick={() => setExpandedSources(expandedSources === `${message.id}-${type}` ? null : `${message.id}-${type}`)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-white/50 bg-white/5 hover:bg-white/10 hover:text-white/70 transition-colors"
+                      >
+                        <span>{sources.length} {getSourceLabel(type)}{sources.length > 1 ? 's' : ''}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Expanded Sources Panel */}
+                {message.role === 'assistant' && expandedSources?.startsWith(message.id) && (
+                  <div className="mb-3 bg-white/5 rounded-lg p-2.5 space-y-1.5">
+                    {message.sources
+                      ?.filter(s => expandedSources === `${message.id}-${s.content_type}`)
+                      .map((source, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white/70 truncate">{source.title}</p>
+                            <p className="text-white/30 text-[10px] truncate">{source.url_or_path}</p>
+                          </div>
+                          <span className="text-white/25 text-[10px]">
+                            {Math.round(source.similarity * 100)}%
+                          </span>
+                        </div>
+                      ))}
                   </div>
                 )}
                 
                 {/* Message Bubble */}
                 <div
-                  className={`rounded-2xl px-4 py-3 ${
+                  className={`rounded-xl px-4 py-3 ${
                     message.role === 'user'
-                      ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white'
-                      : 'bg-white/10 backdrop-blur-sm text-white/90 border border-white/10'
+                      ? 'bg-al-orange text-white'
+                      : 'bg-white/5 text-white/80'
                   }`}
                 >
                   <div 
-                    className="prose prose-sm prose-invert max-w-none"
+                    className="prose prose-sm prose-invert max-w-none [&>p:last-child]:mb-0"
                     dangerouslySetInnerHTML={{ __html: formatContent(message.content) }}
                   />
+                  {message.isStreaming && message.content === '' && (
+                    <div className="flex gap-0.5">
+                      <div className="w-1.5 h-1.5 bg-white/30 rounded-full animate-pulse"></div>
+                      <div className="w-1.5 h-1.5 bg-white/30 rounded-full animate-pulse" style={{ animationDelay: '150ms' }}></div>
+                      <div className="w-1.5 h-1.5 bg-white/30 rounded-full animate-pulse" style={{ animationDelay: '300ms' }}></div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Sources */}
-                {message.sources && message.sources.length > 0 && (
-                  <div className="mt-2">
-                    <button
-                      onClick={() => setShowSources(showSources === message.id ? null : message.id)}
-                      className="text-white/40 text-xs hover:text-white/60 transition-colors flex items-center gap-1"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      {message.sources.length} sources
-                      <svg className={`w-3 h-3 transition-transform ${showSources === message.id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-
-                    {showSources === message.id && (
-                      <div className="mt-2 space-y-2">
-                        {message.sources.map((source, i) => (
-                          <div
-                            key={i}
-                            className="bg-black/20 rounded-lg p-3 border border-white/5"
-                          >
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium uppercase ${getTypeColor(source.content_type)}`}>
-                                {source.content_type}
-                              </span>
-                              <span className="text-white/30 text-xs">
-                                {Math.round(source.similarity * 100)}% match
-                              </span>
-                            </div>
-                            <p className="text-white/80 text-sm font-medium">{source.title}</p>
-                            <p className="text-white/40 text-xs mt-1">{source.url_or_path}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 {/* Timestamp */}
-                <p className={`text-white/30 text-xs mt-1 ${message.role === 'user' ? 'text-right' : ''}`}>
+                <p className={`text-white/20 text-[10px] mt-1 ${message.role === 'user' ? 'text-right' : ''}`}>
                   {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </p>
               </div>
             </div>
           ))}
 
-          {/* Loading indicator */}
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-white/10 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10">
-                <div className="flex items-center gap-2">
-                  <div className="flex gap-1">
-                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                  </div>
-                  <span className="text-white/50 text-sm">Lenny is thinking...</span>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Error message */}
           {error && (
             <div className="flex justify-center">
-              <div className="bg-red-500/20 text-red-300 rounded-lg px-4 py-2 text-sm border border-red-500/30">
-                ⚠️ {error}
+              <div className="bg-red-500/10 text-red-400/80 rounded-lg px-3 py-2 text-xs flex items-center gap-2">
+                {error}
                 <button 
                   onClick={() => setError(null)}
-                  className="ml-2 text-red-400 hover:text-red-300"
+                  className="text-red-400/60 hover:text-red-400"
                 >
                   ×
                 </button>
@@ -279,17 +347,16 @@ export default function AskLennyPage() {
       </div>
 
       {/* Input Area */}
-      <div className="bg-black/20 backdrop-blur-sm border-t border-white/10 px-4 py-4">
+      <div className="border-t border-white/10 px-4 py-4">
         <div className="max-w-4xl mx-auto">
-          <div className="flex gap-3 items-end">
-            <div className="flex-1 relative">
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
               <textarea
-                ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Ask Lenny about AccuLynx..."
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 resize-none"
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-al-orange/50 resize-none text-sm"
                 rows={1}
                 disabled={isLoading}
               />
@@ -297,20 +364,25 @@ export default function AskLennyPage() {
             <button
               onClick={sendMessage}
               disabled={!input.trim() || isLoading}
-              className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl px-5 py-3 font-medium transition-all shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30"
+              className="bg-al-orange hover:bg-al-orange/90 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg px-4 py-3 transition-colors"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-              </svg>
+              {isLoading ? (
+                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                </svg>
+              )}
             </button>
           </div>
-          <p className="text-white/30 text-xs mt-2 text-center">
-            Lenny uses AI to search AccuLynx documentation. Responses may not always be accurate.
+          <p className="text-white/20 text-xs mt-2 text-center">
+            Responses may not always be accurate
           </p>
         </div>
       </div>
-
     </div>
   )
 }
-

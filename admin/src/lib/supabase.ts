@@ -66,6 +66,7 @@ export interface PageAction {
   id: string
   page_id: string
   element_text: string
+  display_label?: string  // Human-friendly label for display (if set, use instead of element_text)
   element_type?: string
   action_classification?: string
   description?: string
@@ -74,6 +75,8 @@ export interface PageAction {
   explored?: boolean
   navigates_to_page_id?: string
   opens_component_id?: string
+  parent_component_id?: string
+  nav_scope?: 'app_global' | 'job_global' | 'contact_global' | 'page_specific'
   navigates_to_page?: AppPage
   opens_component?: PageComponent
 }
