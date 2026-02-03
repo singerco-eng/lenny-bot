@@ -75,3 +75,4 @@ $$;
 -- SELECT * FROM find_components_by_capability('send_email');
 -- SELECT * FROM find_components_by_capability('create_task');
 
+

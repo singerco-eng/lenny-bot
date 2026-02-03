@@ -173,6 +173,27 @@ body {
     @apply al-badge bg-gray-100 text-gray-600;
   }
   
+  /* Alerts/Banners */
+  .al-alert {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg border text-sm;
+  }
+  
+  .al-alert-warning {
+    @apply al-alert bg-al-warning-light border-al-warning text-amber-800;
+  }
+  
+  .al-alert-error {
+    @apply al-alert bg-al-error-bg border-al-error text-red-800;
+  }
+  
+  .al-alert-info {
+    @apply al-alert bg-al-blue-light border-al-blue text-blue-800;
+  }
+  
+  .al-alert-success {
+    @apply al-alert bg-al-success-light border-al-success text-green-800;
+  }
+
   /* Drawer */
   .al-drawer {
     @apply fixed top-0 right-0 h-screen bg-white flex flex-col z-50;

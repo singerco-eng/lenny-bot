@@ -56,6 +56,18 @@ function App() {
             </p>
           </Link>
 
+          <Link to="/research" className="al-card hover:shadow-lg transition-shadow">
+            <div className="al-card-header">
+              <svg className="w-5 h-5 text-al-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+              </svg>
+              Research Calls
+            </div>
+            <p className="text-al-text-secondary text-sm">
+              Tag interview moments and search research insights
+            </p>
+          </Link>
+
           <Link to="/sitemap" className="al-card hover:shadow-lg transition-shadow">
             <div className="al-card-header">
               <svg className="w-5 h-5 text-al-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">

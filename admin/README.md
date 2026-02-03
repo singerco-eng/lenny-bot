@@ -92,3 +92,4 @@ The admin interface reads from these Supabase tables:
 
 See `database/migrations/` in the repo root for full schema.
 
+

@@ -11,3 +11,4 @@ COMMENT ON COLUMN page_actions.display_label IS
 -- Index for queries
 CREATE INDEX IF NOT EXISTS idx_page_actions_display_label ON page_actions(display_label);
 
+

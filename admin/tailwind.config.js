@@ -24,6 +24,7 @@ export default {
           success: '#48BB78',
           'success-light': '#C6F6D5',
           warning: '#F5A623',
+          'warning-light': '#FEEBC8',
           error: '#E53E3E',
           'error-bg': '#FFF5F5',
           'required-bg': '#FFEEDD',

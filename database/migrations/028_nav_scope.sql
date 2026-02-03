@@ -19,3 +19,4 @@ COMMENT ON COLUMN page_components.nav_scope IS
 CREATE INDEX IF NOT EXISTS idx_page_actions_nav_scope ON page_actions(nav_scope);
 CREATE INDEX IF NOT EXISTS idx_page_components_nav_scope ON page_components(nav_scope);
 
+
